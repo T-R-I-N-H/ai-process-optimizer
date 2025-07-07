@@ -1,0 +1,11 @@
+google-genai
+python-dotenv
+pydantic>=2.0 
+fastapi
+uvicorn
+python-multipart 
+mermaid.py
+python-docx 
+PyPDF2 
+lxml 
+pytest
