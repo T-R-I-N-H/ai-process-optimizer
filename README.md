@@ -66,24 +66,3 @@ curl -X POST http://localhost:8002/conversation \
     "memory": ""
   }'
 ```
-
-## Docker Hub
-To publish your image:
-1. **Login to Docker Hub:**
-   ```bash
-   docker login
-   ```
-2. **Tag and push:**
-   ```bash
-   docker tag ai-process-optimizer yourdockerhubusername/ai-process-optimizer:latest
-   docker push yourdockerhubusername/ai-process-optimizer:latest
-   ```
-
-Others can then pull and run:
-```bash
-docker pull yourdockerhubusername/ai-process-optimizer:latest
-docker run --env-file .env -p 8000:8000 yourdockerhubusername/ai-process-optimizer:latest uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-## License
-MIT
