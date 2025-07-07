@@ -33,7 +33,7 @@ GEMINI_API_KEY=your_actual_api_key_here
    ```bash
    uvicorn main:app --reload --port 8000
    ```
-3. **Start the Conversation API (in a new terminal):**
+3. **Start the Conversation API:**
    ```bash
    uvicorn conversation_api:app --port 8002
    ```
