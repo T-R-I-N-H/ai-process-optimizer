@@ -30,8 +30,17 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE_NAME
           script: |
+            cd /home/${{ secrets.EC2_USER }}/app
+
+            cat > .env << 'EOF'
+            ${{ secrets.ENV_FILE_CONTENTS }}
+            EOF
+
+            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_PASSWORD }}
             docker pull $IMAGE_NAME
+
             docker stop ai-process-optimizer || true
-            docker rm ai-process-optimizer || true
+            docker rm ai-process-optimizer || true  
             docker run -d --name ai-process-optimizer --env-file .env -p 8000:8000 -p 8002:8002 $IMAGE_NAME
