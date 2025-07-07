@@ -53,8 +53,18 @@ GEMINI_API_KEY=your_actual_api_key_here
    ```
 
 ## Usage
-- Access the main API docs at: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Access the Visualize API docs at: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Access the Conversation API docs at: [http://localhost:8002/docs](http://localhost:8002/docs)
+
+### Example: Test the Visualize API
+```bash
+curl -X POST http://localhost:8000/visualize/visualize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Generate a BPMN diagram for a simple order process.",
+    "file_texts": "Order Process: 1. Customer places order. 2. System processes order. 3. Order shipped. 4. Order delivered."
+  }'
+```
 
 ### Example: Test the Conversation API
 ```bash
