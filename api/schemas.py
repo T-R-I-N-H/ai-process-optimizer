@@ -17,15 +17,15 @@ class ProcessClarifyRequest(BaseModel):
 
 # --- Conversation API Endpoint ---
 class ConversationRequest(BaseModel):
-    session_id: str = Field(description="The session ID for the ongoing conversation.")
-    prompt: str = Field(description="The user's question or modification request.")
+    session_id: Optional[str] = Field(None, description="Optional: The session ID for the ongoing conversation. If not provided, a new session will be created.")
+    prompt: str = Field(description="The user's question, modification request, or information to add.")
     diagram_data: str = Field(description="The current BPMN XML diagram data.")
     current_memory: str = Field(description="The current conversational memory string.")
 
 class ConversationResponse(BaseModel):
-    action: str = Field(description="Determined action: 'answer_question' or 'modify_diagram'.")
+    action: str = Field(description="Determined action: 'answer_question', 'modify_diagram', or 'add_information'.")
     data: str = Field(description="XML data (e.g., modified diagram or original if answering).")
-    answer: str = Field(description="The AI's answer or confirmation.")
+    answer: str = Field(description="The AI's answer, modification summary, or confirmation.")
     memory: str = Field(description="Updated conversational memory string.")
 
 # --- Optimize API Endpoint ---
@@ -52,16 +52,17 @@ class BenchmarkResponse(BaseModel):
     performance_gaps: str = Field(description="Identified gaps in performance compared to targets.")
 
 # --- Visualize + Description API Endpoint ---
+class FileText(BaseModel):
+    file_type: str = Field(description="Type of the file (e.g., 'pdf', 'docx', 'bpmn').")
+    file_content: str = Field(description="Content extracted from the file.")
+
 class VisualizeRequest(BaseModel):
     prompt: str = Field(description="Prompt for the visualization/description API.")
-    file_texts: str = Field(description="Text parsed from the input file (pdf, docx, bpmn, etc.)")
-
-class NodeDescription(BaseModel):
-    node_id: str = Field(description="Node ID in the BPMN diagram.")
-    node_description: str = Field(description="Description of the node.")
+    file_texts: list[FileText] = Field(description="List of files with their types and contents.")
 
 class VisualizeResponse(BaseModel):
     diagram_data: str = Field(description="BPMN XML diagram data.")
+    diagram_name: str = Field(description="Name of the generated diagram.")
     diagram_description: str = Field(description="High-level description of the diagram.")
-    detail_descriptions: list[NodeDescription] = Field(description="Detailed descriptions for each node.")
+    detail_descriptions: dict[str, str] = Field(description="Map of node_id to node_description.")
     memory: str = Field(description="Memory/context string for future calls.")

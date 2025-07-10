@@ -9,7 +9,9 @@ from agents.context_agent import ContextAgent
 from agents.bottleneck_agent import BottleneckAnalysisAgent
 from agents.information_retrieval_agent import InformationRetrievalAgent
 from agents.solution_generation_agent import SolutionGenerationAgent
+from agents.visualization_agent import VisualizationAgent
 from core.llm_interface import call_gemini
+from services.visualize_api_client import VisualizeApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,8 @@ class WorkflowOrchestrator:
         self.bottleneck_agent = BottleneckAnalysisAgent(call_gemini)
         self.ir_agent = InformationRetrievalAgent(call_gemini)
         self.solution_agent = SolutionGenerationAgent(call_gemini)
+        self.visualization_agent = VisualizationAgent(call_gemini)
+        # self.visualize_api_client = VisualizeApiClient()  # No longer needed here
 
     def start_new_session(self, user_id: str) -> str:
         session_id = str(uuid.uuid4())
@@ -43,7 +47,327 @@ class WorkflowOrchestrator:
         logger.info(f"New session started for user {user_id}: {session_id}")
         return session_id
 
-    def process_user_query(self, session_id: str, query: str, file_texts: Optional[str] = None, file_type: Optional[str] = None) -> Dict:
+    def determine_user_intent(self, query: str) -> str:
+        """
+        Determine the user's intent from their query.
+        Returns: 'visualize', 'improve', 'analyze', or 'conversation'
+        """
+        intent_prompt = f"""
+        Analyze the following user query and determine their primary intent:
+        
+        Query: "{query}"
+        
+        Classify the intent as one of:
+        - "visualize": User wants to create/generate a BPMN diagram from a process description
+        - "improve": User wants to improve/optimize an existing process
+        - "analyze": User wants to analyze a process for bottlenecks or issues
+        - "conversation": User is asking questions about an existing diagram, requesting modifications, or providing additional information
+        
+        Look for keywords like:
+        - "conversation": "what is", "how does", "explain", "modify", "add", "change", "update", "question", "why", "when", "where"
+        - "visualize": "create diagram", "generate BPMN", "draw", "visualize", "show me"
+        - "improve": "improve", "optimize", "better", "faster", "cheaper", "enhance"
+        - "analyze": "analyze", "bottleneck", "problem", "issue", "slow", "expensive"
+        
+        Return only the intent word (visualize, improve, analyze, or conversation).
+        """
+        
+        try:
+            intent = self.context_agent.llm_caller(intent_prompt, temperature=0.1, max_output_tokens=50).strip().lower()
+            if intent in ['visualize', 'improve', 'analyze', 'conversation']:
+                return intent
+            else:
+                # Default to conversation if unclear (safer default)
+                return 'conversation'
+        except Exception as e:
+            logger.error(f"Error determining user intent: {e}")
+            return 'conversation'
+
+    def visualize_process_only(self, session_id: str, query: str, file_texts: Optional[str] = None, file_type: Optional[str] = None) -> Dict:
+        """
+        Direct visualization workflow - only generates BPMN diagram without process improvement.
+        """
+        session_data = self.sessions.get(session_id)
+        if not session_data:
+            logger.error(f"Session {session_id} not found during visualize_process_only.")
+            return {"status": "error", "message": "Invalid session ID."}
+
+        session_data["query"] = query
+        session_data["original_file_texts"] = file_texts
+        session_data["original_file_type"] = file_type
+        session_data["status"] = "Processing Visualization"
+        session_data["last_step_completed"] = None
+
+        logger.info(f"[{session_id}] Processing visualization request: '{query[:50]}...'")
+
+        try:
+            # 1. Context Agent - extract process information
+            logger.info(f"[{session_id}] Calling Context Agent for visualization...")
+            process_desc = self.context_agent.process_query(query)
+            session_data["process_desc"] = process_desc
+            session_data["last_step_completed"] = "context_analysis"
+            logger.info(f"[{session_id}] Context Agent processed. Process: {process_desc.name}")
+
+            if not process_desc.name or not process_desc.steps:
+                session_data["status"] = "Clarification Needed"
+                session_data["data"] = {"clarification_message": "Could not understand the process to visualize. Please provide more details about the process steps."}
+                logger.warning(f"[{session_id}] Context Agent needs clarification for visualization.")
+                return {"status": "clarification_needed", "message": "More details needed to understand the process.", "session_id": session_id, "data": session_data["data"]}
+
+            # 2. Visualization Agent - generate BPMN diagram
+            logger.info(f"[{session_id}] Calling Visualization Agent...")
+            viz_result = self.visualization_agent.generate_diagram(
+                process_name=process_desc.name,
+                process_steps=process_desc.steps,
+                process_description=f"Goal: {process_desc.goal}. Inputs: {', '.join(process_desc.inputs)}. Outputs: {', '.join(process_desc.outputs)}",
+                file_context=file_texts or ""
+            )
+
+            session_data["diagram_data"] = viz_result["diagram_data"]
+            session_data["diagram_description"] = viz_result["diagram_description"]
+            session_data["detail_descriptions"] = viz_result["detail_descriptions"]
+            
+            # Generate memory for visualization workflow
+            visualization_memory = f"""
+            Visualization Session Memory:
+            - Process Name: {process_desc.name}
+            - Process Steps: {len(process_desc.steps)} steps
+            - Process Goal: {process_desc.goal or 'Not specified'}
+            - Process Inputs: {', '.join(process_desc.inputs) if process_desc.inputs else 'None'}
+            - Process Outputs: {', '.join(process_desc.outputs) if process_desc.outputs else 'None'}
+            - Generated Diagram: {viz_result.get("diagram_name", "Process Diagram")}
+            - Diagram Description: {viz_result.get("diagram_description", "Generated BPMN diagram")}
+            - Number of Diagram Elements: {len(viz_result.get("detail_descriptions", {}))}
+            - Visualization Timestamp: {__import__('datetime').datetime.now().isoformat()}
+            """
+            session_data["visualization_memory"] = visualization_memory.strip()
+            
+            session_data["last_step_completed"] = "visualization_complete"
+            logger.info(f"[{session_id}] Visualization Agent generated diagram.")
+
+            session_data["status"] = "completed"
+            session_data["message"] = "Process visualization complete!"
+            session_data["data"] = {
+                "process_name": process_desc.name,
+                "process_steps": process_desc.steps,
+                "diagram_data": session_data["diagram_data"],
+                "diagram_name": viz_result["diagram_name"],
+                "diagram_description": session_data["diagram_description"],
+                "detail_descriptions": session_data["detail_descriptions"],
+                "memory": session_data["visualization_memory"]  # Return the memory
+            }
+            return {"status": "completed", "message": "Process visualization complete!", "session_id": session_id, "data": session_data["data"]}
+
+        except Exception as e:
+            session_data["status"] = "error"
+            session_data["message"] = f"An error occurred during visualization: {e}"
+            logger.exception(f"[{session_id}] Critical error during visualize_process_only.")
+            return {"status": "error", "message": f"An error occurred: {e}", "session_id": session_id}
+
+    def handle_conversation(self, session_id: str, query: str, diagram_data: str = "", memory: str = "") -> Dict:
+        """
+        Handle conversation workflow - answer questions about diagrams or modify them.
+        """
+        session_data = self.sessions.get(session_id)
+        if not session_data:
+            logger.error(f"Session {session_id} not found during handle_conversation.")
+            return {"status": "error", "message": "Invalid session ID."}
+
+        session_data["query"] = query
+        session_data["status"] = "Processing Conversation"
+        session_data["last_step_completed"] = None
+
+        logger.info(f"[{session_id}] Processing conversation: '{query[:50]}...'")
+
+        try:
+            # Determine if this is a question or modification request
+            conversation_type = self._determine_conversation_type(query)
+            logger.info(f"[{session_id}] Conversation type: {conversation_type}")
+
+            if conversation_type == "question":
+                # Handle question about diagram
+                answer = self._answer_diagram_question(query, diagram_data, memory, session_data)
+                session_data["conversation_memory"] = memory + f"\nQ: {query}\nA: {answer}"
+                
+                session_data["status"] = "completed"
+                session_data["message"] = "Question answered successfully!"
+                session_data["data"] = {
+                    "action": "answer_question",
+                    "data": diagram_data,  # Return original diagram
+                    "answer": answer,
+                    "memory": session_data["conversation_memory"]
+                }
+                return {"status": "completed", "message": "Question answered successfully!", "session_id": session_id, "data": session_data["data"]}
+
+            elif conversation_type == "modification":
+                # Handle diagram modification
+                modified_diagram = self._modify_diagram(query, diagram_data, memory, session_data)
+                session_data["conversation_memory"] = memory + f"\nModification Request: {query}\nApplied: {modified_diagram.get('summary', 'Diagram modified')}"
+                
+                session_data["status"] = "completed"
+                session_data["message"] = "Diagram modified successfully!"
+                session_data["data"] = {
+                    "action": "modify_diagram",
+                    "data": modified_diagram.get("diagram_data", diagram_data),
+                    "answer": f"Diagram has been modified: {modified_diagram.get('summary', 'Changes applied')}",
+                    "memory": session_data["conversation_memory"]
+                }
+                return {"status": "completed", "message": "Diagram modified successfully!", "session_id": session_id, "data": session_data["data"]}
+
+            else:
+                # Handle information addition
+                updated_memory = self._add_information(query, memory, session_data)
+                session_data["conversation_memory"] = updated_memory
+                
+                session_data["status"] = "completed"
+                session_data["message"] = "Information added to memory!"
+                session_data["data"] = {
+                    "action": "add_information",
+                    "data": diagram_data,  # Return original diagram
+                    "answer": "Information has been added to the conversation memory for future reference.",
+                    "memory": session_data["conversation_memory"]
+                }
+                return {"status": "completed", "message": "Information added to memory!", "session_id": session_id, "data": session_data["data"]}
+
+        except Exception as e:
+            session_data["status"] = "error"
+            session_data["message"] = f"An error occurred during conversation: {e}"
+            logger.exception(f"[{session_id}] Critical error during handle_conversation.")
+            return {"status": "error", "message": f"An error occurred: {e}", "session_id": session_id}
+
+    def _determine_conversation_type(self, query: str) -> str:
+        """Determine if the conversation is a question, modification, or information addition."""
+        type_prompt = f"""
+        Analyze this query and determine the conversation type:
+        
+        Query: "{query}"
+        
+        Classify as:
+        - "question": User is asking about the diagram (what, how, why, when, where, explain, describe)
+        - "modification": User wants to change/modify the diagram (add, remove, change, modify, update, edit)
+        - "information": User is providing additional information or context
+        
+        Return only: question, modification, or information
+        """
+        
+        try:
+            conv_type = self.context_agent.llm_caller(type_prompt, temperature=0.1, max_output_tokens=50).strip().lower()
+            if conv_type in ['question', 'modification', 'information']:
+                return conv_type
+            else:
+                return 'question'  # Default to question
+        except Exception as e:
+            logger.error(f"Error determining conversation type: {e}")
+            return 'question'
+
+    def _answer_diagram_question(self, query: str, diagram_data: str, memory: str, session_data: Dict) -> str:
+        """Answer questions about the diagram."""
+        context = f"""
+        Diagram Data: {diagram_data}
+        Conversation Memory: {memory}
+        Current Session Data: {session_data.get('diagram_description', '')}
+        """
+        
+        answer_prompt = f"""
+        Based on the following context, answer the user's question about the BPMN diagram.
+        
+        Context:
+        {context}
+        
+        User Question: "{query}"
+        
+        Provide a clear, helpful answer about the diagram. If the question cannot be answered from the available information, say so politely.
+        """
+        
+        try:
+            answer = self.context_agent.llm_caller(answer_prompt, temperature=0.3, max_output_tokens=500)
+            return answer
+        except Exception as e:
+            logger.error(f"Error answering question: {e}")
+            return "I'm sorry, I couldn't process your question at the moment. Please try again."
+
+    def _modify_diagram(self, query: str, diagram_data: str, memory: str, session_data: Dict) -> Dict:
+        """Modify the diagram based on user request."""
+        context = f"""
+        Original Diagram: {diagram_data}
+        Conversation Memory: {memory}
+        Current Session Data: {session_data.get('diagram_description', '')}
+        """
+        
+        modification_prompt = f"""
+        Based on the following context, modify the BPMN diagram according to the user's request.
+        
+        Context:
+        {context}
+        
+        User Modification Request: "{query}"
+        
+        Generate a modified BPMN 2.0 XML diagram that incorporates the requested changes.
+        Return the response in this exact JSON format:
+        {{
+            "diagram_data": "<bpmn:definitions>...</bpmn:definitions>",
+            "summary": "Brief description of what was modified"
+        }}
+        """
+        
+        try:
+            response = self.visualization_agent.llm_caller(modification_prompt, temperature=0.3, max_output_tokens=2000)
+            
+            import json
+            import re
+            
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+                return {
+                    "diagram_data": result.get("diagram_data", diagram_data),
+                    "summary": result.get("summary", "Diagram modified")
+                }
+            else:
+                return {
+                    "diagram_data": diagram_data,
+                    "summary": "Could not parse modification response"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error modifying diagram: {e}")
+            return {
+                "diagram_data": diagram_data,
+                "summary": "Error occurred during modification"
+            }
+
+    def _add_information(self, query: str, memory: str, session_data: Dict) -> str:
+        """Add information to the conversation memory."""
+        # Simply append the new information to existing memory
+        if memory:
+            updated_memory = memory + f"\nAdditional Information: {query}"
+        else:
+            updated_memory = f"Additional Information: {query}"
+        
+        return updated_memory
+
+    def process_user_query(self, session_id: str, query: str, file_texts: Optional[str] = None, file_type: Optional[str] = None, diagram_data: str = "", memory: str = "") -> Dict:
+        """
+        Main entry point that determines user intent and routes to appropriate workflow.
+        """
+        # Determine user intent
+        intent = self.determine_user_intent(query)
+        logger.info(f"[{session_id}] Determined user intent: {intent}")
+
+        if intent == "visualize":
+            # Direct visualization workflow
+            return self.visualize_process_only(session_id, query, file_texts, file_type)
+        elif intent == "conversation":
+            # Conversation workflow
+            return self.handle_conversation(session_id, query, diagram_data, memory)
+        else:
+            # Full process improvement workflow (existing logic)
+            return self._process_improvement_workflow(session_id, query, file_texts, file_type)
+
+    def _process_improvement_workflow(self, session_id: str, query: str, file_texts: Optional[str] = None, file_type: Optional[str] = None) -> Dict:
+        """
+        Full process improvement workflow (existing logic).
+        """
         session_data = self.sessions.get(session_id)
         if not session_data:
             logger.error(f"Session {session_id} not found during process_user_query.")
@@ -112,27 +436,37 @@ class WorkflowOrchestrator:
             session_data["last_step_completed"] = "solution_generation"
             logger.info(f"[{session_id}] Solution Agent proposed improvements.")
 
-            # 4. Visualization (Use LLM to generate BPMN XML)
-            logger.info(f"[{session_id}] Generating BPMN XML and descriptions by LLM.")
-            # Use LLM to generate BPMN XML
-            bpmn_prompt = (
-                f"Generate a BPMN 2.0 XML diagram for the following improved process. "
-                f"The process name is: '{improved_process.name}'. "
-                f"The steps are: " + ", ".join(improved_process.improved_steps) + ". "
-                f"Return only the BPMN XML content, no explanation."
+            # 4. Visualization Agent - generate BPMN for improved process
+            logger.info(f"[{session_id}] Calling Visualization Agent for improved process...")
+            viz_result = self.visualization_agent.generate_diagram(
+                process_name=improved_process.name,
+                process_steps=improved_process.improved_steps,
+                process_description=f"Improved process based on: {improved_process.summary_of_changes}",
+                file_context=file_texts or ""
             )
-            bpmn_xml = call_gemini(bpmn_prompt, temperature=0.2, max_output_tokens=2048)
-            diagram_description = f"This BPMN diagram represents the improved process '{improved_process.name}' with {len(improved_process.improved_steps)} steps."
-            detail_descriptions = [
-                {"node_id": f"Step_{i+1}", "node_description": step}
-                for i, step in enumerate(improved_process.improved_steps)
-            ]
-            session_data["diagram_data"] = bpmn_xml
-            session_data["diagram_description"] = diagram_description
-            session_data["detail_descriptions"] = detail_descriptions
-            session_data["visualization_memory"] = ""  # No external memory
+
+            session_data["diagram_data"] = viz_result["diagram_data"]
+            session_data["diagram_description"] = viz_result["diagram_description"]
+            session_data["detail_descriptions"] = viz_result["detail_descriptions"]
+            
+            # Generate comprehensive memory for process improvement workflow
+            improvement_memory = f"""
+            Process Improvement Session Memory:
+            - Original Process: {process_desc.name}
+            - Original Steps: {len(process_desc.steps)} steps
+            - Bottlenecks Identified: {len(session_data["bottlenecks"])}
+            - Verified Information Sources: {len(session_data["verified_info"])}
+            - Improvements Generated: {len(improved_process.improvements)}
+            - Improved Process: {improved_process.name}
+            - Improved Steps: {len(improved_process.improved_steps)} steps
+            - Summary of Changes: {improved_process.summary_of_changes}
+            - Generated Diagram: {viz_result.get("diagram_name", "Improved Process Diagram")}
+            - Analysis Timestamp: {__import__('datetime').datetime.now().isoformat()}
+            """
+            session_data["visualization_memory"] = improvement_memory.strip()
+            
             session_data["last_step_completed"] = "visualization_complete"
-            logger.info(f"[{session_id}] BPMN XML and descriptions generated by LLM.")
+            logger.info(f"[{session_id}] Visualization Agent generated improved process diagram.")
 
             session_data["status"] = "completed"
             session_data["message"] = "Process analysis and improvement complete!"
@@ -140,8 +474,10 @@ class WorkflowOrchestrator:
                 "improved_process_summary": improved_process.summary_of_changes,
                 "improved_process_steps": improved_process.improved_steps,
                 "diagram_data": session_data["diagram_data"],
+                "diagram_name": viz_result["diagram_name"],
                 "diagram_description": session_data["diagram_description"],
-                "detail_descriptions": session_data["detail_descriptions"]
+                "detail_descriptions": session_data["detail_descriptions"],
+                "memory": session_data["visualization_memory"]  # Return the memory
             }
             return {"status": "completed", "message": "Process analysis and improvement complete!", "session_id": session_id, "data": session_data["data"]}
 

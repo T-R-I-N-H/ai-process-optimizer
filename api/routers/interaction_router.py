@@ -8,6 +8,7 @@ from api.schemas import (
 from services.conversation_api_client import ConversationApiClient
 from services.optimize_api_client import OptimizeApiClient
 from services.benchmark_api_client import BenchmarkApiClient
+from core.orchestrator import WorkflowOrchestrator
 import logging
 
 router = APIRouter()
@@ -20,25 +21,52 @@ conversation_api_client = ConversationApiClient()
 optimize_api_client = OptimizeApiClient()
 benchmark_api_client = BenchmarkApiClient()
 
+# Dependency to get the orchestrator instance from the app state
+def get_orchestrator_dependency(request: Request) -> WorkflowOrchestrator:
+    return request.app.state.orchestrator
 
 @router.post("/conversation", response_model=ConversationResponse, summary="Interact with the Conversation API for diagram questions/modifications")
 async def conversation_interaction(
-    request_body: ConversationRequest
+    request_body: ConversationRequest,
+    request: Request,
+    orchestrator: WorkflowOrchestrator = Depends(get_orchestrator_dependency)
 ):
     """
-    Sends a prompt, diagram data, and current memory to the Conversation API.
-    Receives an action (answer or modify), data, answer, and updated memory.
+    Handles conversation with the system about diagrams - questions, modifications, or information addition.
+    
+    This endpoint can:
+    - Answer questions about existing diagrams
+    - Modify diagrams based on user requests
+    - Add information to conversation memory
+    
+    The system determines the conversation type and responds accordingly.
     """
     try:
-        response = conversation_api_client.interact(
-            prompt=request_body.prompt,
+        # Create a session for the conversation if not provided
+        session_id = request_body.session_id if request_body.session_id else orchestrator.start_new_session(user_id="conversation_user")
+        
+        # Use the orchestrator's conversation workflow
+        response = orchestrator.handle_conversation(
+            session_id=session_id,
+            query=request_body.prompt,
             diagram_data=request_body.diagram_data,
             memory=request_body.current_memory
         )
-        return ConversationResponse(**response)
+        
+        if response["status"] == "completed":
+            data = response["data"]
+            return ConversationResponse(
+                action=data["action"],
+                data=data["data"],
+                answer=data["answer"],
+                memory=data["memory"]
+            )
+        else:
+            raise HTTPException(status_code=400, detail=response["message"])
+            
     except Exception as e:
-        logger.error(f"Error calling Conversation API: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to interact with Conversation API: {e}")
+        logger.error(f"Error in conversation interaction: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process conversation: {e}")
 
 @router.post("/optimize", response_model=OptimizeResponse, summary="Call the Optimize API to get an optimized process diagram")
 async def optimize_process(

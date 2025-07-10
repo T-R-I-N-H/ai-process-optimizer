@@ -1,27 +1,39 @@
-from fastapi import APIRouter, HTTPException, Request
-from api.schemas import VisualizeRequest, VisualizeResponse, NodeDescription
+from fastapi import APIRouter, HTTPException
+from api.schemas import VisualizeRequest, VisualizeResponse
+from services.visualize_api_client import VisualizeApiClient
 import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.post("/visualize", response_model=VisualizeResponse, summary="Generate BPMN diagram and descriptions from parsed file text", tags=["Visualization"])
-async def visualize_description(request_body: VisualizeRequest, request: Request):
-    """
-    Generate a BPMN diagram and detailed descriptions from parsed file text.
+visualize_api_client = VisualizeApiClient()
 
-    This endpoint takes a user prompt and the text parsed from a process file (PDF, DOCX, BPMN, etc.),
+@router.post("/visualize", response_model=VisualizeResponse, summary="Generate BPMN diagram from process description", tags=["Visualization"])
+async def visualize_description(request_body: VisualizeRequest):
+    """
+    Dedicated visualization service that generates BPMN diagrams from process descriptions.
+    
+    This endpoint is focused solely on diagram generation and does not perform process improvement
+    or bottleneck analysis. For process improvement workflows, use the /process endpoints.
+
+    This endpoint takes a user prompt and a list of files with their types and contents,
     and returns:
     - BPMN diagram data (XML)
+    - Diagram name
     - A high-level diagram description
-    - Detailed descriptions for each node in the diagram
+    - Detailed descriptions for each node in the diagram (as a map)
     - Memory/context string for future calls
 
     **Sample Request:**
     ```json
     {
-      "prompt": "Generate a BPMN diagram for a simple order process.",
-      "file_texts": "Order Process: 1. Customer places order. 2. System processes order. 3. Order shipped. 4. Order delivered."
+      "prompt": "Create a BPMN diagram for an online course registration process",
+      "file_texts": [
+        {
+          "file_type": "docx",
+          "file_content": "Process: 1. Student browses courses. 2. Student selects course. 3. System processes payment. 4. Student receives confirmation."
+        }
+      ]
     }
     ```
 
@@ -29,40 +41,32 @@ async def visualize_description(request_body: VisualizeRequest, request: Request
     ```json
     {
       "diagram_data": "<bpmn:definitions>...</bpmn:definitions>",
-      "diagram_description": "This BPMN diagram represents a simple order process with steps for placing, processing, shipping, and delivering an order.",
-      "detail_descriptions": [
-        {"node_id": "Task_1", "node_description": "Customer places an order."},
-        {"node_id": "Task_2", "node_description": "System processes the order."},
-        {"node_id": "Task_3", "node_description": "Order is shipped to the customer."},
-        {"node_id": "Task_4", "node_description": "Order is delivered to the customer."}
-      ],
-      "memory": "session_memory_string"
+      "diagram_name": "Course Registration Process Diagram",
+      "diagram_description": "BPMN diagram representing the online course registration process",
+      "detail_descriptions": {
+        "Task_1": "Student browses available courses",
+        "Task_2": "Student selects desired course",
+        "Task_3": "System processes payment",
+        "Task_4": "Student receives confirmation"
+      },
+      "memory": ""
     }
     ```
     """
-    orchestrator = request.app.state.orchestrator
     try:
-        # Use the orchestrator to generate BPMN XML and related info
-        # We'll treat the prompt as the process description and file_texts as context
-        session_id = orchestrator.start_new_session(user_id="visualize_api")
-        result = orchestrator.process_user_query(
-            session_id=session_id,
-            query=request_body.prompt,
-            file_texts=request_body.file_texts,
-            file_type="bpmn"
+        # Convert Pydantic models to dict for the client
+        file_texts_dict = [file_text.model_dump() for file_text in request_body.file_texts]
+        api_response = visualize_api_client.visualize(
+            prompt=request_body.prompt,
+            file_texts=file_texts_dict
         )
-        data = result.get("data", {})
-        # Convert detail_descriptions to NodeDescription objects if needed
-        detail_descriptions = [
-            NodeDescription(**desc) if not isinstance(desc, NodeDescription) else desc
-            for desc in data.get("detail_descriptions", [])
-        ]
         return VisualizeResponse(
-            diagram_data=data.get("diagram_data", ""),
-            diagram_description=data.get("diagram_description", ""),
-            detail_descriptions=detail_descriptions,
-            memory=""
+            diagram_data=api_response["diagram_data"],
+            diagram_name=api_response["diagram_name"],
+            diagram_description=api_response["Diagram_description"],
+            detail_descriptions=api_response["detail_descriptions"],
+            memory=api_response["Memory"]
         )
     except Exception as e:
-        logger.error(f"Error calling Visualize API: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to call Visualize API: {e}") 
+        logger.error(f"Error in visualization service: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate diagram: {e}") 
