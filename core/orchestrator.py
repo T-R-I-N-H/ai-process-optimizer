@@ -193,7 +193,8 @@ class WorkflowOrchestrator:
                 session_data["message"] = "Question answered successfully!"
                 session_data["data"] = {
                     "action": "answer_question",
-                    "data": diagram_data,  # Return original diagram
+                    "diagram_data": diagram_data,  # Return original diagram
+                    "detail_descriptions": {},  # Empty for questions
                     "answer": answer,
                     "memory": session_data["conversation_memory"]
                 }
@@ -202,14 +203,19 @@ class WorkflowOrchestrator:
             elif conversation_type == "modification":
                 # Handle diagram modification
                 modified_diagram = self._modify_diagram(query, diagram_data, memory, session_data)
-                session_data["conversation_memory"] = memory + f"\nModification Request: {query}\nApplied: {modified_diagram.get('summary', 'Diagram modified')}"
+                modified_diagram_data = modified_diagram.get("diagram_data", diagram_data)
+                detail_descriptions = modified_diagram.get("detail_descriptions", {})
+                modification_summary = modified_diagram.get("summary", "Diagram modified")
+                
+                session_data["conversation_memory"] = memory + f"\nModification Request: {query}\nApplied: {modification_summary}"
                 
                 session_data["status"] = "completed"
                 session_data["message"] = "Diagram modified successfully!"
                 session_data["data"] = {
                     "action": "modify_diagram",
-                    "data": modified_diagram.get("diagram_data", diagram_data),
-                    "answer": f"Diagram has been modified: {modified_diagram.get('summary', 'Changes applied')}",
+                    "diagram_data": modified_diagram_data,
+                    "detail_descriptions": detail_descriptions,
+                    "answer": f"Diagram has been modified successfully. Changes made: {modification_summary}",
                     "memory": session_data["conversation_memory"]
                 }
                 return {"status": "completed", "message": "Diagram modified successfully!", "session_id": session_id, "data": session_data["data"]}
@@ -223,7 +229,8 @@ class WorkflowOrchestrator:
                 session_data["message"] = "Information added to memory!"
                 session_data["data"] = {
                     "action": "add_information",
-                    "data": diagram_data,  # Return original diagram
+                    "diagram_data": diagram_data,  # Return original diagram
+                    "detail_descriptions": {},  # Empty for information addition
                     "answer": "Information has been added to the conversation memory for future reference.",
                     "memory": session_data["conversation_memory"]
                 }
@@ -303,11 +310,22 @@ class WorkflowOrchestrator:
         User Modification Request: "{query}"
         
         Generate a modified BPMN 2.0 XML diagram that incorporates the requested changes.
+        Also extract the node descriptions from the modified diagram.
+        
         Return the response in this exact JSON format:
         {{
             "diagram_data": "<bpmn:definitions>...</bpmn:definitions>",
-            "summary": "Brief description of what was modified"
+            "detail_descriptions": {{
+                "StartEvent_1": "Process starts",
+                "Task_1": "Description of the first task",
+                "Task_2": "Description of the second task",
+                "EndEvent_1": "Process ends"
+            }},
+            "summary": "Detailed description of what was modified (e.g., 'Added a new quality check task after Task_2, renamed Task_1 to 'Order Processing')"
         }}
+        
+        Ensure the BPMN XML is valid and follows BPMN 2.0 standards.
+        The summary should clearly explain what changes were made to the diagram.
         """
         
         try:
@@ -321,19 +339,24 @@ class WorkflowOrchestrator:
                 result = json.loads(json_match.group())
                 return {
                     "diagram_data": result.get("diagram_data", diagram_data),
-                    "summary": result.get("summary", "Diagram modified")
+                    "detail_descriptions": result.get("detail_descriptions", {}),
+                    "summary": result.get("summary", "Diagram modified based on user request")
                 }
             else:
+                # Fallback: try to extract basic information from the response
+                fallback_summary = f"Applied modification: {query}"
                 return {
                     "diagram_data": diagram_data,
-                    "summary": "Could not parse modification response"
+                    "detail_descriptions": {},
+                    "summary": fallback_summary
                 }
                 
         except Exception as e:
             logger.error(f"Error modifying diagram: {e}")
             return {
                 "diagram_data": diagram_data,
-                "summary": "Error occurred during modification"
+                "detail_descriptions": {},
+                "summary": f"Error occurred during modification: {str(e)}"
             }
 
     def _add_information(self, query: str, memory: str, session_data: Dict) -> str:
