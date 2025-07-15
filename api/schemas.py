@@ -71,14 +71,11 @@ class OptimizeResponse(BaseModel):
 
 # --- Benchmark API Endpoint ---
 class BenchmarkRequest(BaseModel):
-    session_id: str = Field(description="The session ID for the process to benchmark.")
     diagram_data: str = Field(description="The BPMN XML diagram data of the process to benchmark.")
-    target_metrics: Dict[str, Union[str, float]] = Field(description="Target metrics for benchmarking (e.g., {'resolution_time': '24 hours'}).")
-    industry_data: Optional[str] = Field(None, description="Optional: Relevant industry benchmark data or context.")
+    memory: str = Field(description="Current memory/context string.")
 
 class BenchmarkResponse(BaseModel):
-    benchmark_report: str = Field(description="A detailed report comparing the process to benchmarks.")
-    performance_gaps: str = Field(description="Identified gaps in performance compared to targets.")
+    Benchmark_data: Dict[str, str] = Field(description="Map of factor (concise definition on diagram features) to description (detail and explanation).")
 
 # --- Visualize + Description API Endpoint ---
 class FileText(BaseModel):

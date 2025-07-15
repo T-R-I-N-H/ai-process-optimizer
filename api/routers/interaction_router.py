@@ -164,14 +164,13 @@ async def benchmark_process(
     request_body: BenchmarkRequest
 ):
     """
-    Sends diagram data and target metrics to the Benchmark API.
-    Receives a benchmark report and identified performance gaps.
+    Sends diagram data and memory to the Benchmark API.
+    Receives a map of factors to descriptions.
     """
     try:
         response = benchmark_api_client.benchmark(
             diagram_data=request_body.diagram_data,
-            target_metrics=request_body.target_metrics,
-            industry_data=request_body.industry_data
+            memory=request_body.memory
         )
         return BenchmarkResponse(**response)
     except Exception as e:

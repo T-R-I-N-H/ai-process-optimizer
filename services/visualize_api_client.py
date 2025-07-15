@@ -60,17 +60,26 @@ class VisualizeApiClient:
             if json_match:
                 response_json = json.loads(json_match.group())
                 
-                # Generate meaningful memory
-                memory_content = f"""
-                Visualization Session Memory:
-                - User Request: {prompt}
-                - Generated Diagram: {response_json.get("diagram_name", "Process Diagram")}
-                - Diagram Description: {response_json.get("diagram_description", "Generated BPMN diagram")}
-                - Number of Tasks: {len(response_json.get("detail_descriptions", {}))}
-                - File Types Processed: {[ft['file_type'] for ft in file_texts]}
-                - Generation Timestamp: {__import__('datetime').datetime.now().isoformat()}
-                """
-                
+                # Generate concise memory focusing on user preferences and diagram data
+                file_types = ', '.join([ft['file_type'] for ft in file_texts])
+                num_tasks = len(response_json.get("detail_descriptions", {}))
+                diagram_name = response_json.get("diagram_name", "N/A")
+                # Heuristic: extract special preferences from prompt
+                preferences = []
+                prompt_lower = prompt.lower()
+                if "swimlane" in prompt_lower:
+                    preferences.append("swimlane")
+                if "highlight" in prompt_lower:
+                    preferences.append("highlighted steps")
+                if "approval" in prompt_lower:
+                    preferences.append("approval steps")
+                if "color" in prompt_lower:
+                    preferences.append("color coding")
+                if not preferences:
+                    preferences.append("standard")
+                memory_content = (
+                    f"Diagram: {diagram_name}; Tasks: {num_tasks}; File type(s): {file_types}; Preferences: {', '.join(preferences)}."
+                )
                 return {
                     "diagram_data": response_json.get("diagram_data", "<bpmn:definitions>...</bpmn:definitions>"),
                     "diagram_name": response_json.get("diagram_name", "Process Diagram"),
@@ -81,14 +90,22 @@ class VisualizeApiClient:
             else:
                 # Fallback if JSON parsing fails
                 logger.warning("Could not parse JSON from LLM response, using fallback")
-                fallback_memory = f"""
-                Visualization Session Memory:
-                - User Request: {prompt}
-                - Status: Fallback diagram generated due to parsing error
-                - File Types: {[ft['file_type'] for ft in file_texts]}
-                - Generation Timestamp: {__import__('datetime').datetime.now().isoformat()}
-                """
-                
+                file_types = ', '.join([ft['file_type'] for ft in file_texts])
+                preferences = []
+                prompt_lower = prompt.lower()
+                if "swimlane" in prompt_lower:
+                    preferences.append("swimlane")
+                if "highlight" in prompt_lower:
+                    preferences.append("highlighted steps")
+                if "approval" in prompt_lower:
+                    preferences.append("approval steps")
+                if "color" in prompt_lower:
+                    preferences.append("color coding")
+                if not preferences:
+                    preferences.append("standard")
+                fallback_memory = (
+                    f"Diagram: Generated Process Diagram; Tasks: 2; File type(s): {file_types}; Preferences: {', '.join(preferences)}."
+                )
                 return {
                     "diagram_data": "<bpmn:definitions>...</bpmn:definitions>",
                     "diagram_name": "Generated Process Diagram",
@@ -99,14 +116,9 @@ class VisualizeApiClient:
                 
         except Exception as e:
             logger.error(f"Error in visualization service: {e}")
-            error_memory = f"""
-            Visualization Session Memory:
-            - User Request: {prompt}
-            - Status: Error occurred during generation
-            - Error: {str(e)}
-            - Generation Timestamp: {__import__('datetime').datetime.now().isoformat()}
-            """
-            
+            error_memory = (
+                f"Diagram: Error - Process Diagram; Tasks: 0; File type(s): {', '.join([ft['file_type'] for ft in file_texts])}; Preferences: error."
+            )
             # Return a basic fallback response
             return {
                 "diagram_data": "<bpmn:definitions>...</bpmn:definitions>",

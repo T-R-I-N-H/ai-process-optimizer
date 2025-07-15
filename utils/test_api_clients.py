@@ -52,12 +52,12 @@ class TestApiClients(unittest.TestCase):
         client = BenchmarkApiClient()
         with requests_mock.Mocker() as m:
             m.post(client.api_endpoint, json={
-                "benchmark_report": "Good performance.",
-                "performance_gaps": "None."
+                "Benchmark_data": {"factor1": "desc1", "factor2": "desc2"}
             }, status_code=200)
 
-            response = client.benchmark("<diag>", {"time": "1hr"})
-            self.assertEqual(response["benchmark_report"], "Good performance.")
+            response = client.benchmark("<diag>", "memory string")
+            self.assertIn("Benchmark_data", response)
+            self.assertEqual(response["Benchmark_data"], {"factor1": "desc1", "factor2": "desc2"})
 
 if __name__ == '__main__':
     unittest.main()
