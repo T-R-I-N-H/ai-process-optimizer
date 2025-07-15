@@ -12,8 +12,18 @@ from agents.solution_generation_agent import SolutionGenerationAgent
 from agents.visualization_agent import VisualizationAgent
 from core.llm_interface import call_gemini
 from services.visualize_api_client import VisualizeApiClient
+from utils.language import detect_language
+import re
+import json
 
 logger = logging.getLogger(__name__)
+
+LANGUAGE_INSTRUCTIONS = {
+    'vi': 'Trả lời người dùng bằng tiếng Việt. Tất cả giải thích, tóm tắt, và mô tả phải sử dụng tiếng Việt.',
+    'en': 'Answer the user in English. All explanations, summaries, and descriptions must be in English.'
+}
+def get_language_instruction(language: str) -> str:
+    return LANGUAGE_INSTRUCTIONS.get(language, LANGUAGE_INSTRUCTIONS['en'])
 
 class WorkflowOrchestrator:
     def __init__(self):
@@ -23,7 +33,6 @@ class WorkflowOrchestrator:
         self.ir_agent = InformationRetrievalAgent(call_gemini)
         self.solution_agent = SolutionGenerationAgent(call_gemini)
         self.visualization_agent = VisualizationAgent(call_gemini)
-        # self.visualize_api_client = VisualizeApiClient()  # No longer needed here
 
     def start_new_session(self, user_id: str) -> str:
         session_id = str(uuid.uuid4())
@@ -184,9 +193,11 @@ class WorkflowOrchestrator:
             conversation_type = self._determine_conversation_type(query)
             logger.info(f"[{session_id}] Conversation type: {conversation_type}")
 
+            language = detect_language(query)
+
             if conversation_type == "question":
                 # Handle question about diagram
-                answer = self._answer_diagram_question(query, diagram_data, memory, session_data)
+                answer = self._answer_diagram_question(query, diagram_data, memory, session_data, language)
                 session_data["conversation_memory"] = memory + f"\nQ: {query}\nA: {answer}"
                 
                 session_data["status"] = "completed"
@@ -202,7 +213,7 @@ class WorkflowOrchestrator:
 
             elif conversation_type == "modification":
                 # Handle diagram modification
-                modified_diagram = self._modify_diagram(query, diagram_data, memory, session_data)
+                modified_diagram = self._modify_diagram(query, diagram_data, memory, session_data, language)
                 modified_diagram_data = modified_diagram.get("diagram_data", diagram_data)
                 detail_descriptions = modified_diagram.get("detail_descriptions", {})
                 modification_summary = modified_diagram.get("summary", "Diagram modified")
@@ -215,7 +226,7 @@ class WorkflowOrchestrator:
                     "action": "modify_diagram",
                     "diagram_data": modified_diagram_data,
                     "detail_descriptions": detail_descriptions,
-                    "answer": f"Diagram has been modified successfully. Changes made: {modification_summary}",
+                    "answer": modification_summary,
                     "memory": session_data["conversation_memory"]
                 }
                 return {"status": "completed", "message": "Diagram modified successfully!", "session_id": session_id, "data": session_data["data"]}
@@ -242,6 +253,70 @@ class WorkflowOrchestrator:
             logger.exception(f"[{session_id}] Critical error during handle_conversation.")
             return {"status": "error", "message": f"An error occurred: {e}", "session_id": session_id}
 
+    def handle_optimization(self, diagram_data: str, memory: str) -> Dict:
+        """
+        Optimizes a process diagram by analyzing it, generating solutions, and creating a new diagram.
+        """
+        try:
+            language = detect_language(diagram_data + " " + memory)
+            language_instruction = get_language_instruction(language)
+            # 1. Use ContextAgent to understand the current process from the diagram
+            # This is a simplified approach. A more robust solution would parse the BPMN
+            # to create a detailed ProcessDescription object.
+            process_desc_prompt = f"""
+            {language_instruction}
+            Analyze the following BPMN diagram and create a brief process description.
+            Focus on the main steps, participants, and the likely goal.
+            BPMN Data:
+            {diagram_data}
+            
+            Memory/Context:
+            {memory}
+
+            Provide the output as a simple text description.
+            """
+            process_summary = self.context_agent.llm_caller(process_desc_prompt, max_output_tokens=500)
+            process_desc = ProcessDescription(name="Process from Diagram", goal="Optimize existing process", steps=[process_summary])
+
+            # 2. Identify bottlenecks
+            bottlenecks = self.bottleneck_agent.identify_bottlenecks(process_desc)
+
+            # 3. Generate solutions
+            improved_process = self.solution_agent.generate_solutions(process_desc, bottlenecks, [])
+
+            # 4. Visualize the new process
+            viz_result = self.visualization_agent.generate_diagram(
+                process_name=improved_process.name,
+                process_steps=improved_process.improved_steps,
+                process_description=improved_process.summary_of_changes
+            )
+            
+            # 5. Format the response
+            answer = improved_process.summary_of_changes
+            
+            optimization_detail = {
+                f"Improvement_{i+1}": f"{imp.description} (Expected Impact: {imp.expected_impact})"
+                for i, imp in enumerate(improved_process.improvements)
+            }
+
+            updated_memory = memory + f"\n\n[Optimization Summary]\n" + answer
+
+            return {
+                "status": "completed",
+                "message": "Process optimized successfully!",
+                "data": {
+                    "diagram_data": viz_result["diagram_data"],
+                    "answer": answer,
+                    "detail_descriptions": viz_result["detail_descriptions"],
+                    "optimization_detail": optimization_detail,
+                    "memory": updated_memory,
+                },
+            }
+
+        except Exception as e:
+            logger.exception("Error during optimization handling")
+            return {"status": "error", "message": f"An error occurred during optimization: {str(e)}"}
+
     def _determine_conversation_type(self, query: str) -> str:
         """Determine if the conversation is a question, modification, or information addition."""
         type_prompt = f"""
@@ -267,15 +342,16 @@ class WorkflowOrchestrator:
             logger.error(f"Error determining conversation type: {e}")
             return 'question'
 
-    def _answer_diagram_question(self, query: str, diagram_data: str, memory: str, session_data: Dict) -> str:
+    def _answer_diagram_question(self, query: str, diagram_data: str, memory: str, session_data: Dict, language: str) -> str:
         """Answer questions about the diagram."""
         context = f"""
         Diagram Data: {diagram_data}
         Conversation Memory: {memory}
         Current Session Data: {session_data.get('diagram_description', '')}
         """
-        
+        language_instruction = get_language_instruction(language)
         answer_prompt = f"""
+        {language_instruction}
         Based on the following context, answer the user's question about the BPMN diagram.
         
         Context:
@@ -293,15 +369,15 @@ class WorkflowOrchestrator:
             logger.error(f"Error answering question: {e}")
             return "I'm sorry, I couldn't process your question at the moment. Please try again."
 
-    def _modify_diagram(self, query: str, diagram_data: str, memory: str, session_data: Dict) -> Dict:
-        """Modify the diagram based on user request."""
+    def _modify_diagram(self, query: str, diagram_data: str, memory: str, session_data: Dict, language: str) -> Dict:
         context = f"""
         Original Diagram: {diagram_data}
         Conversation Memory: {memory}
         Current Session Data: {session_data.get('diagram_description', '')}
         """
-        
+        language_instruction = get_language_instruction(language)
         modification_prompt = f"""
+        {language_instruction}
         Based on the following context, modify the BPMN diagram according to the user's request.
         
         Context:
@@ -312,7 +388,9 @@ class WorkflowOrchestrator:
         Generate a modified BPMN 2.0 XML diagram that incorporates the requested changes.
         Also extract the node descriptions from the modified diagram.
         
-        Return the response in this exact JSON format:
+        In the summary, concisely and naturally describe the changes in the same language as the user's request. Do not use generic phrases like 'Changes made:' or 'Diagram has been modified.'
+        
+        Return ONLY the following JSON object. Do not include any explanation, language instruction, or text outside the JSON. Do not repeat the language instruction in your output. Do not return anything except the JSON object.
         {{
             "diagram_data": "<bpmn:definitions>...</bpmn:definitions>",
             "detail_descriptions": {{
@@ -327,36 +405,59 @@ class WorkflowOrchestrator:
         Ensure the BPMN XML is valid and follows BPMN 2.0 standards.
         The summary should clearly explain what changes were made to the diagram.
         """
-        
         try:
-            response = self.visualization_agent.llm_caller(modification_prompt, temperature=0.3, max_output_tokens=2000)
-            
-            import json
-            import re
-            
+            response = self.visualization_agent.llm_caller(modification_prompt, temperature=0.0, max_output_tokens=2000)
+            logger.info(f"Raw LLM output for modification: {response}")
+            # Try to extract JSON block
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-                return {
-                    "diagram_data": result.get("diagram_data", diagram_data),
-                    "detail_descriptions": result.get("detail_descriptions", {}),
-                    "summary": result.get("summary", "Diagram modified based on user request")
-                }
-            else:
-                # Fallback: try to extract basic information from the response
-                fallback_summary = f"Applied modification: {query}"
-                return {
-                    "diagram_data": diagram_data,
-                    "detail_descriptions": {},
-                    "summary": fallback_summary
-                }
-                
+            json_str = json_match.group() if json_match else response
+            # Auto-fix common JSON issues
+            def fix_json(s):
+                s = s.strip()
+                # Replace single quotes with double quotes
+                s = re.sub(r"'", '"', s)
+                # Remove trailing commas before closing braces/brackets
+                s = re.sub(r',([ \t\r\n]*[}\]])', r'\1', s)
+                # Remove any leading/trailing text outside the outermost braces
+                first = s.find('{')
+                last = s.rfind('}')
+                if first != -1 and last != -1:
+                    s = s[first:last+1]
+                return s
+            try:
+                result = json.loads(json_str)
+            except Exception:
+                try:
+                    fixed = fix_json(json_str)
+                    result = json.loads(fixed)
+                except Exception:
+                    # User-friendly error in user's language
+                    fallback_summary = (
+                        "Xin lỗi, tôi không thể xử lý yêu cầu của bạn. Vui lòng thử lại." if language == "vi" else
+                        "Sorry, I could not process your request. Please try again."
+                    )
+                    return {
+                        "diagram_data": diagram_data,
+                        "detail_descriptions": {},
+                        "summary": fallback_summary
+                    }
+            return {
+                "diagram_data": result.get("diagram_data", diagram_data),
+                "detail_descriptions": result.get("detail_descriptions", {}),
+                "summary": result.get("summary", (
+                    "Xin lỗi, tôi không thể xử lý yêu cầu của bạn. Vui lòng thử lại." if language == "vi" else
+                    "Sorry, I could not process your request. Please try again."
+                ))
+            }
         except Exception as e:
             logger.error(f"Error modifying diagram: {e}")
             return {
                 "diagram_data": diagram_data,
                 "detail_descriptions": {},
-                "summary": f"Error occurred during modification: {str(e)}"
+                "summary": (
+                    "Xin lỗi, tôi không thể xử lý yêu cầu của bạn. Vui lòng thử lại." if language == "vi" else
+                    "Sorry, I could not process your request. Please try again."
+                )
             }
 
     def _add_information(self, query: str, memory: str, session_data: Dict) -> str:
@@ -368,6 +469,27 @@ class WorkflowOrchestrator:
             updated_memory = f"Additional Information: {query}"
         
         return updated_memory
+
+    def _extract_node_descriptions(self, diagram_data: str) -> Dict[str, str]:
+        """Extract node descriptions from BPMN XML."""
+        descriptions = {}
+        try:
+            # Remove default namespace for easier parsing
+            diagram_data = diagram_data.replace('xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"', '')
+            root = ET.fromstring(diagram_data)
+            
+            # Find all elements with an 'id' and 'name' attribute
+            for element in root.findall(".//*[@id][@name]"):
+                descriptions[element.attrib['id']] = element.attrib['name']
+                
+        except ET.ParseError as e:
+            logger.error(f"Error parsing BPMN XML: {e}")
+            return {"error": "Invalid BPMN XML provided."}
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during node description extraction: {e}")
+            return {"error": "Could not extract node descriptions."}
+            
+        return descriptions
 
     def process_user_query(self, session_id: str, query: str, file_texts: Optional[str] = None, file_type: Optional[str] = None, diagram_data: str = "", memory: str = "") -> Dict:
         """

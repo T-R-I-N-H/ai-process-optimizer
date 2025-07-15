@@ -10,7 +10,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 from api.routers import process_router, interaction_router, visualize_router
-from api.routers.conversation_router import router as conversation_router
 from core.orchestrator import WorkflowOrchestrator
 
 # Load environment variables
@@ -51,7 +50,6 @@ logger.info("Workflow Orchestrator initialized and added to app state.")
 app.include_router(process_router, prefix="/process", tags=["Process Management"])
 app.include_router(interaction_router, prefix="/interaction", tags=["External API Interactions"])
 app.include_router(visualize_router, prefix="/visualize", tags=["Visualization"])
-app.include_router(conversation_router, prefix="/conversation", tags=["Conversation"])
 logger.info("API routers included.")
 
 @app.get("/")

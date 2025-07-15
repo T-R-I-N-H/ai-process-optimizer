@@ -2,14 +2,12 @@ import unittest
 import requests_mock
 from services.visualize_api_client import VisualizeApiClient
 from services.conversation_api_client import ConversationApiClient
-from services.optimize_api_client import OptimizeApiClient
 from services.benchmark_api_client import BenchmarkApiClient
 import os
 
 # Set dummy environment variables for testing clients
 os.environ["VISUALIZE_API_ENDPOINT"] = "http://mock-visualize.com/visualize"
 os.environ["CONVERSATION_API_ENDPOINT"] = "http://mock-conversation.com/conversation"
-os.environ["OPTIMIZE_API_ENDPOINT"] = "http://mock-optimize.com/optimize"
 os.environ["BENCHMARK_API_ENDPOINT"] = "http://mock-benchmark.com/benchmark"
 
 class TestApiClients(unittest.TestCase):
@@ -49,18 +47,6 @@ class TestApiClients(unittest.TestCase):
             self.assertEqual(response["action"], "answer_question")
             self.assertEqual(response["answer"], "Hello!")
             self.assertEqual(response["memory"], "New memory")
-
-    def test_optimize_api_client_success(self):
-        client = OptimizeApiClient()
-        with requests_mock.Mocker() as m:
-            m.post(client.api_endpoint, json={
-                "optimized_diagram_data": "<optimized_bpmn>",
-                "predicted_improvements": "Better!",
-                "trade_offs": "None."
-            }, status_code=200)
-
-            response = client.optimize("<diag>", "speed", {})
-            self.assertEqual(response["predicted_improvements"], "Better!")
 
     def test_benchmark_api_client_success(self):
         client = BenchmarkApiClient()

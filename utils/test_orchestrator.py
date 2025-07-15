@@ -63,6 +63,49 @@ class TestWorkflowOrchestrator(unittest.TestCase):
         # If you want to assert its content, you'd access orchestrator.sessions[session_id]['visualization_memory']
         self.assertEqual(orchestrator.sessions[session_id]['visualization_memory'], "Visualization context memory.")
 
+    @patch('agents.visualization_agent.VisualizationAgent.generate_diagram')
+    @patch('agents.solution_generation_agent.SolutionGenerationAgent.generate_solutions')
+    @patch('agents.bottleneck_agent.BottleneckAnalysisAgent.identify_bottlenecks')
+    @patch('agents.context_agent.ContextAgent.llm_caller')
+    def test_handle_optimization_success(self, mock_llm_caller, mock_identify_bottlenecks, mock_generate_solutions, mock_generate_diagram):
+        # Mock agent behaviors
+        mock_llm_caller.return_value = "A simple process with a manual step."
+        mock_identify_bottlenecks.return_value = [
+            MagicMock(location="Manual Step", reason_hypothesis="Slow and error-prone")
+        ]
+        mock_generate_solutions.return_value = ImprovedProcess(
+            name="Optimized Process",
+            original_process=ProcessDescription(name="Original", steps=["Manual Step"], goal="Optimization"),
+            improvements=[
+                MagicMock(description="Automated the manual step", expected_impact="Faster and more reliable")
+            ],
+            improved_steps=["Start", "Automated Step", "End"],
+            summary_of_changes="The manual step was replaced with an automated one."
+        )
+        mock_generate_diagram.return_value = {
+            "diagram_data": "<bpmn:definitions>...optimized...</bpmn:definitions>",
+            "detail_descriptions": {"Task_1": "Automated Step"}
+        }
+
+        orchestrator = WorkflowOrchestrator()
+        diagram_data = "<bpmn:definitions>...original...</bpmn:definitions>"
+        memory = "Initial memory."
+
+        result = orchestrator.handle_optimization(diagram_data, memory)
+
+        self.assertEqual(result["status"], "completed")
+        data = result["data"]
+        self.assertEqual(data["diagram_data"], "<bpmn:definitions>...optimized...</bpmn:definitions>")
+        self.assertEqual(data["answer"], "The manual step was replaced with an automated one.")
+        self.assertEqual(data["detail_descriptions"], {"Task_1": "Automated Step"})
+        self.assertIn("Improvement_1", data["optimization_detail"])
+        self.assertIn("Initial memory.", data["memory"])
+
+        # Verify calls
+        mock_llm_caller.assert_called_once()
+        mock_identify_bottlenecks.assert_called_once()
+        mock_generate_solutions.assert_called_once()
+        mock_generate_diagram.assert_called_once()
 
     def test_clarification_needed_context(self):
         self.mock_llm_caller_context = MagicMock()

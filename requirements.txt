@@ -9,3 +9,4 @@ python-docx
 PyPDF2 
 lxml 
 pytest
+langdetect
