@@ -49,7 +49,9 @@ class VisualizeApiClient:
         """
         
         try:
-            response = call_gemini(visualization_prompt, temperature=0.3, max_output_tokens=2000)
+            response = call_gemini(visualization_prompt, temperature=0.3, max_output_tokens=65536)
+            logger.info(f"Visualization_prompt: {visualization_prompt}")
+            logger.info(f"Raw LLM response: {response}")
             
             # Try to extract JSON from the response
             import json

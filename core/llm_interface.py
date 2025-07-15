@@ -1,4 +1,5 @@
 from google import genai
+from google.genai import types
 import os
 import logging
 
@@ -22,10 +23,16 @@ def call_gemini(prompt: str, temperature: float = 0.7, max_output_tokens: int = 
         response = client.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt,
-            # generation_config={
-            #     "temperature": temperature,
-            #     "max_output_tokens": max_output_tokens
-            # }
+            config=types.GenerateContentConfig(
+                system_instruction='You are a smart AI assistance, developed by TRINH team. You can assist user with process visualization, optimization, and evaluation.',
+                max_output_tokens= max_output_tokens,
+            #     # top_k= 2,
+            #     # top_p= 0.5,
+                temperature= temperature,
+            #     response_mime_type= 'application/json',
+            #     stop_sequences= ['\n'],
+            #     seed=42,
+            )
         )
         if hasattr(response, 'text') and response.text:
             return response.text
