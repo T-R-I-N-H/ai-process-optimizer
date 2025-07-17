@@ -54,13 +54,15 @@ class VisualizeApiClient:
             Nội dung tệp:
             {combined_file_content}
             
-            Tạo một sơ đồ BPMN 2.0 XML hợp lệ thể hiện quy trình được mô tả. Bao gồm:
+            Tạo một sơ đồ BPMN 2.0 XML hợp lệ thể hiện quy trình được mô tả. Đảm bảo cấu trúc này phản ánh các bên tham gia và luồng thông tin giữa họ. Bao gồm:
             1. Tên quy trình rõ ràng
-            2. Các tác vụ/hoạt động tuần tự (tên của mỗi tác vụ và hoạt động phải ngắn gọn, từ 6-8 từ)
-            3. Cổng cho các điểm quyết định và điều kiện (thêm để logic tốt hơn, ngay cả khi không có mô tả trong dữ liệu)
-            4. Mũi tên kết nối các tác vụ/hoạt động (thêm để logic tốt hơn, ngay cả khi không có mô tả trong dữ liệu, các tác vụ phải nối với nhau có logic hoặc nối với điểm kết thúc, không được có tác vụ không nối đến gì cả)
-            5. Sự kiện bắt đầu và kết thúc
-            6. Cấu trúc BPMN XML phù hợp
+            2. Các Pool (bể) và Lane (làn) để phân chia vai trò/bộ phận tham gia vào quy trình (ví dụ: Khách hàng, Ngân hàng, Phòng ban X, Y, Z). Đặt tên rõ ràng cho từng Pool và Lane.
+            3. Các tác vụ/hoạt động tuần tự (tên của mỗi tác vụ và hoạt động phải ngắn gọn, từ 4-8 từ)
+            4. Cổng cho các điểm quyết định và điều kiện (thêm để logic tốt hơn, ngay cả khi không có mô tả trong dữ liệu)
+            5. Mũi tên kết nối các tác vụ/hoạt động trong cùng một làn (Sequence Flows). Thêm để logic tốt hơn, ngay cả khi không có mô tả trong dữ liệu, các tác vụ phải nối với nhau có logic hoặc nối với điểm kết thúc, không được có tác vụ không nối đến gì cả.
+            6. **Các đường luồng thông điệp (Message Flows) để thể hiện sự trao đổi thông tin giữa các Pool hoặc Lane khác nhau, nếu có sự tương tác qua lại giữa chúng.**
+            7. Sự kiện bắt đầu và kết thúc
+            8. Cấu trúc BPMN XML phù hợp
             
             Trả về phản hồi theo định dạng JSON chính xác này:
             {{
@@ -84,13 +86,16 @@ class VisualizeApiClient:
             File Content:
             {combined_file_content}
             
-            Generate a valid BPMN 2.0 XML diagram that represents the process described. Include:
-            1. A clear process name
-            2. Sequential tasks/activities (the name of each task and activity should be concise, from 6-8 words)
-            3. Gateways for decision points and conditions (add for better logic, even if there is no description in the data)
-            4. Arrows connecting tasks/activities (add for better logic, even if there is no description in the data, tasks have to connect to eachother or to endpoint logically, there should be no task that doesn't connect to anything) 
-            5. Start and end events
-            6. Proper BPMN XML structure
+            Generate a valid BPMN 2.0 XML diagram that represents the process described. Ensure the diagram accurately reflects the participants (roles/departments) and the flow of information between them. Include the following BPMN elements:
+
+            1.  A clear and concise process name.
+            2.  Appropriate Pools and Lanes to clearly segment the process by participating roles or departments (e.g., "Customer," "Bank," "Department X"). Name each Pool and Lane distinctly.
+            3.  Sequential tasks/activities within each Lane. The name of each task and activity should be concise, ideally between 4-8 words, and clearly describe the action.
+            4.  Gateways for decision points and conditional branching (e.g., Exclusive Gateways for "yes/no" decisions, Parallel Gateways for concurrent activities). Add these for robust process logic, even if not explicitly detailed in the input data.
+            5.  Sequence Flows (solid arrows) to connect tasks/activities logically within the same Lane. Ensure all tasks are connected to subsequent tasks, gateways, or an end event, preventing disconnected elements.
+            6.  **Message Flows (dashed arrows) to illustrate the exchange of information or communication between different Pools or Lanes, where interactions across participants occur.**
+            7.  Start and end events to define the beginning and termination points of the process.
+            8.  A proper and well-structured BPMN XML compliant with BPMN 2.0 standards.
             
 
             Return the response in this exact JSON format:
@@ -108,7 +113,7 @@ class VisualizeApiClient:
             """
         
         try:
-            response = call_gemini(visualization_prompt, temperature=0.7, max_output_tokens=65536)
+            response = call_gemini(visualization_prompt, temperature=0.2, max_output_tokens=65536)
             logger.info(f"Visualization_prompt: {visualization_prompt}")
             logger.info(f"Raw LLM response: {response}")
             

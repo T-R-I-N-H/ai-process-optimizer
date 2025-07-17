@@ -13,7 +13,7 @@ except Exception as e:
     logger.error(f"Failed to configure Gemini Client: {e}")
     client = None
 
-def call_gemini(prompt: str, temperature: float = 0.7, max_output_tokens: int = 1000) -> str:
+def call_gemini(prompt: str, temperature: float = 0.2, max_output_tokens: int = 1000) -> str:
     """Helper function to call the Gemini API using the latest client interface."""
     if client is None:
         logger.error("Gemini client is not initialized. Cannot call Gemini API.")
@@ -26,8 +26,8 @@ def call_gemini(prompt: str, temperature: float = 0.7, max_output_tokens: int = 
             config=types.GenerateContentConfig(
                 system_instruction='You are a smart AI assistance, developed by TRINH team. You can assist user with process visualization, optimization, and evaluation.',
                 max_output_tokens= max_output_tokens,
-            #     # top_k= 2,
-            #     # top_p= 0.5,
+                top_k= 30,
+                top_p= 0.95,
                 temperature= temperature,
             #     response_mime_type= 'application/json',
             #     stop_sequences= ['\n'],
