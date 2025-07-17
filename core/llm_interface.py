@@ -21,7 +21,7 @@ def call_gemini(prompt: str, temperature: float = 0.7, max_output_tokens: int = 
 
     try:
         response = client.models.generate_content(
-            model='gemini-2.0-flash',
+            model='gemini-2.5-pro',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction='You are a smart AI assistance, developed by TRINH team. You can assist user with process visualization, optimization, and evaluation.',
