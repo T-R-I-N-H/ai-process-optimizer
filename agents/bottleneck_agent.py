@@ -12,18 +12,18 @@ class BottleneckAnalysisAgent(BaseAgent):
     The Process Analysis & Bottleneck Identification Agent (PABIA).
     Identifies potential bottlenecks and reasons within a process.
     """
-    def identify_bottlenecks(self, process_desc: ProcessDescription, verified_info: Optional[VerifiedInformation] = None) -> List[BottleneckHypothesis]:
+    def identify_bottlenecks(self, process_desc: ProcessDescription, verified_info: Optional[VerifiedInformation] = None, diagram_data: str = None) -> List[BottleneckHypothesis]:
         """
-        Analyzes a process description to identify potential bottlenecks.
+        Analyzes a process description and diagram to identify potential bottlenecks.
         Can incorporate verified information for refinement.
         """
         info_context = ""
         if verified_info:
             info_context = f"\nConsider the following verified information and best practices: {verified_info.summary}\nSource Confidence: {verified_info.confidence}"
-
+        diagram_context = f"\nBPMN Diagram Data:\n{diagram_data}\n" if diagram_data else ""
         prompt = f"""
-        Analyze the following business process description.
-        Identify potential bottlenecks, inefficiencies, or areas for improvement based on the process steps, pain points, and stated goals.
+        Analyze the following business process description and BPMN diagram.
+        Identify potential bottlenecks, inefficiencies, or areas for improvement based on the process steps, pain points, stated goals, and the diagram structure.
         If verified information is provided, use it to refine your analysis and inform your hypotheses.
 
         For each suspected bottleneck:
@@ -36,6 +36,7 @@ class BottleneckAnalysisAgent(BaseAgent):
         Pain Points: {', '.join(process_desc.pain_points) if process_desc.pain_points else 'None specified'}
         Goal: {process_desc.goal}
         {info_context}
+        {diagram_context}
 
         Provide the output as a JSON list of BottleneckHypothesis objects:
         ```json
@@ -52,27 +53,22 @@ class BottleneckAnalysisAgent(BaseAgent):
         If no obvious bottlenecks are identified, return an empty list `[]`.
         """
         logger.info(f"BottleneckAnalysisAgent: Sending prompt to LLM for process '{process_desc.name}'.")
-        response_json_str = self.llm_caller(prompt, temperature=0.5, max_output_tokens=1000) # Increased max_output_tokens
+        response_json_str = self.llm_caller(prompt, temperature=0.5, max_output_tokens=20000)
+        print(response_json_str)
         logger.debug(f"BottleneckAnalysisAgent: Raw LLM response: {response_json_str}")
-
         try:
-            # Attempt to clean markdown if present
             if response_json_str.strip().startswith("```json"):
                 response_json_str = response_json_str.strip()[len("```json"):].strip()
             if response_json_str.strip().endswith("```"):
                 response_json_str = response_json_str.strip()[:-len("```")].strip()
-
-            # Using eval with caution: ensure LLM output is trusted or sanitize
-            # For robust production, consider json.loads and strict schema validation
-            bottlenecks_data = eval(response_json_str) # This assumes LLM returns a list of dicts directly
+            bottlenecks_data = eval(response_json_str)
             return [BottleneckHypothesis.model_validate(item) for item in bottlenecks_data]
         except ValidationError as e:
             logger.error(f"BottleneckAnalysisAgent: Pydantic validation error parsing LLM output: {e}\nRaw output: {response_json_str}")
-            return [] # Return empty list on validation error
+            return []
         except Exception as e:
             logger.error(f"BottleneckAnalysisAgent: General error parsing LLM output: {e}\nRaw output: {response_json_str}")
-            return [] # Return empty list on general parsing error
+            return []
 
-    def process(self, process_desc: ProcessDescription, verified_info: Optional[VerifiedInformation] = None) -> List[BottleneckHypothesis]:
-        """Generic process method for BaseAgent."""
-        return self.identify_bottlenecks(process_desc, verified_info)
+    def process(self, process_desc: ProcessDescription, verified_info: Optional[VerifiedInformation] = None, diagram_data: str = None) -> List[BottleneckHypothesis]:
+        return self.identify_bottlenecks(process_desc, verified_info, diagram_data)

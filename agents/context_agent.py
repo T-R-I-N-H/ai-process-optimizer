@@ -76,6 +76,25 @@ class ContextAgent(BaseAgent):
                 goal="Clarification needed due to processing error."
             )
 
+    def process_diagram(self, diagram_data: str, memory: str, language_instruction: str = "") -> str:
+        """
+        Processes a BPMN diagram and memory/context to extract a process summary.
+        """
+        prompt = f"""
+        {language_instruction}
+        Analyze the following BPMN 2.0 XML diagram and memory/context. Summarize the main process, its steps, participants, and likely goal.
+        BPMN Data:
+        {diagram_data}
+        
+        Memory/Context:
+        {memory}
+        
+        Provide a concise process summary in natural language.
+        """
+        logger.info(f"ContextAgent: Sending diagram+memory prompt to LLM.")
+        response = self.llm_caller(prompt, temperature=0.2, max_output_tokens=700)
+        return response.strip()
+
     def process(self, user_query: str) -> ProcessDescription:
         """Generic process method for BaseAgent."""
         return self.process_query(user_query)

@@ -21,7 +21,7 @@ def call_gemini(prompt: str, temperature: float = 0.2, max_output_tokens: int = 
 
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-pro',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction='You are a smart AI assistance, developed by TRINH team. You can assist user with process visualization, optimization, and evaluation.',
@@ -29,9 +29,9 @@ def call_gemini(prompt: str, temperature: float = 0.2, max_output_tokens: int = 
                 top_k= 30,
                 top_p= 0.95,
                 temperature= temperature,
-            #     response_mime_type= 'application/json',
-            #     stop_sequences= ['\n'],
-            #     seed=42,
+                response_mime_type= 'application/json',
+                # stop_sequences= ['\n'],
+                seed=42,
             )
         )
         if hasattr(response, 'text') and response.text:

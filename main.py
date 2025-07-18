@@ -1,9 +1,22 @@
 import uvicorn
-from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import logging
+import time
+from fastapi import FastAPI, Request
+
+logger = logging.getLogger("uvicorn.access")  # Or your preferred logger
+
+app = FastAPI()
+
+@app.middleware("http")
+async def log_request_time(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = (time.time() - start_time) * 1000  # ms
+    logger.info(f"Request: {request.method} {request.url.path} completed in {process_time:.2f} ms")
+    return response
 
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

@@ -258,48 +258,86 @@ class WorkflowOrchestrator:
         Optimizes a process diagram by analyzing it, generating solutions, and creating a new diagram.
         """
         try:
+            logger.info("Starting optimization workflow...")
             language = detect_language(diagram_data + " " + memory)
             language_instruction = get_language_instruction(language)
-            # 1. Use ContextAgent to understand the current process from the diagram
-            # This is a simplified approach. A more robust solution would parse the BPMN
-            # to create a detailed ProcessDescription object.
-            process_desc_prompt = f"""
-            {language_instruction}
-            Analyze the following BPMN diagram and create a brief process description.
-            Focus on the main steps, participants, and the likely goal.
-            BPMN Data:
-            {diagram_data}
+            logger.info(f"Detected language: {language}")
             
-            Memory/Context:
-            {memory}
-
-            Provide the output as a simple text description.
-            """
-            process_summary = self.context_agent.llm_caller(process_desc_prompt, max_output_tokens=500)
+            # 1. Use ContextAgent to understand the current process from the diagram
+            logger.info("Step 1: Analyzing BPMN diagram with ContextAgent...")
+            process_summary = self.context_agent.process_diagram(diagram_data, memory, language_instruction)
+            logger.info(f"ContextAgent output: {process_summary[:200]}...")
             process_desc = ProcessDescription(name="Process from Diagram", goal="Optimize existing process", steps=[process_summary])
 
             # 2. Identify bottlenecks
-            bottlenecks = self.bottleneck_agent.identify_bottlenecks(process_desc)
+            logger.info("Step 2: Identifying bottlenecks with BottleneckAnalysisAgent...")
+            bottlenecks = self.bottleneck_agent.identify_bottlenecks(process_desc, diagram_data=diagram_data)
+            logger.info(f"BottleneckAgent identified {len(bottlenecks)} bottlenecks")
+            for i, bottleneck in enumerate(bottlenecks):
+                logger.info(f" Bottleneck {i+1}: {bottleneck.location} - {bottleneck.reason_hypothesis}")
 
-            # 3. Generate solutions
-            improved_process = self.solution_agent.generate_solutions(process_desc, bottlenecks, [])
+            # 3. Retrieve and verify information for process and bottlenecks
+            logger.info("Step 3: Retrieving and verifying information with InformationRetrievalAgent...")
+            info_queries = []
+            for b in bottlenecks:
+                if hasattr(b, 'info_needed') and b.info_needed:
+                    info_queries.extend(b.info_needed)
+            info_queries.insert(0, f"best practices for optimizing {process_desc.name}")
+            logger.info(f"Information queries to process: {info_queries}")
+            
+            verified_info_list = []
+            for i, query in enumerate(info_queries):
+                logger.info(f"  Processing query {i+1}: {query}")
+                info = self.ir_agent.retrieve_and_verify(query)
+                logger.info(f"  Query {i+1} result - Confidence: {info.confidence}, Relevance: {info.relevance}")
+                logger.info(f"  Query {i+1} summary: {info.summary[:100]}...")
+                verified_info_list.append(info)
 
-            # 4. Visualize the new process
+            # 4. Generate solutions
+            logger.info("Step 4: Generating solutions with SolutionGenerationAgent...")
+            improved_process = self.solution_agent.generate_solutions(process_desc, bottlenecks, verified_info_list, diagram_data=diagram_data)
+            logger.info(f"SolutionAgent generated {len(improved_process.improvements)} improvements")
+            logger.info(f"Improved process name: {improved_process.name}")
+            logger.info(f"Summary of changes: {improved_process.summary_of_changes[:200]}...")
+            # loger.info(f"Improve process: {improved_process}")
+            # 5. Visualize the new process
+            logger.info("Step 5: Generating visualization with VisualizationAgent...")
             viz_result = self.visualization_agent.generate_diagram(
                 process_name=improved_process.name,
                 process_steps=improved_process.improved_steps,
-                process_description=improved_process.summary_of_changes
+                process_description=improved_process.summary_of_changes,
+                diagram_data=diagram_data
             )
+            logger.info(f"VisualizationAgent generated diagram with {len(viz_result.get('detail_descriptions',[]))} elements")
             
-            # 5. Format the response
+            # 6. Format the response
+            logger.info("Step 6: Formatting final response...")
             answer = improved_process.summary_of_changes
             
             optimization_detail = {
-                f"Improvement_{i+1}": f"{imp.description} (Expected Impact: {imp.expected_impact})"
-                for i, imp in enumerate(improved_process.improvements)
+                (" ".join(imp.description.split()[:8]) + ("..." if len(imp.description.split()) > 8 else "")):
+                    f"{imp.description} (Expected Impact: {imp.expected_impact})"
+                for imp in improved_process.improvements
             }
+            logger.info(f"Created {len(optimization_detail)} optimization details")
 
             updated_memory = memory + f"\n\n[Optimization Summary]\n" + answer
+            logger.info("Optimization workflow completed successfully!")
+
+            # Post-process detail_descriptions to use task/event names as keys if possible
+            detail_descriptions = viz_result["detail_descriptions"]
+            if detail_descriptions and isinstance(detail_descriptions, dict):
+                # Try to map IDs to names using the BPMN XML
+                id_to_name = self._extract_node_descriptions(viz_result["diagram_data"])
+                # If mapping is successful and keys are IDs, replace them with names
+                new_detail_descriptions = {}
+                for k, v in detail_descriptions.items():
+                    # If the key is an ID and exists in the mapping, use the name as key
+                    if k in id_to_name:
+                        new_detail_descriptions[id_to_name[k]] = v
+                    else:
+                        new_detail_descriptions[k] = v
+                detail_descriptions = new_detail_descriptions
 
             return {
                 "status": "completed",
@@ -307,7 +345,7 @@ class WorkflowOrchestrator:
                 "data": {
                     "diagram_data": viz_result["diagram_data"],
                     "answer": answer,
-                    "detail_descriptions": viz_result["detail_descriptions"],
+                    "detail_descriptions": detail_descriptions,
                     "optimization_detail": optimization_detail,
                     "memory": updated_memory,
                 },
@@ -363,7 +401,7 @@ class WorkflowOrchestrator:
         """
         
         try:
-            answer = self.context_agent.llm_caller(answer_prompt, temperature=0.3, max_output_tokens=500)
+            answer = self.context_agent.llm_caller(answer_prompt, temperature=0.3, max_output_tokens=20000)
             return answer
         except Exception as e:
             logger.error(f"Error answering question: {e}")
@@ -406,7 +444,7 @@ class WorkflowOrchestrator:
         The summary should clearly explain what changes were made to the diagram.
         """
         try:
-            response = self.visualization_agent.llm_caller(modification_prompt, temperature=0.0, max_output_tokens=2000)
+            response = self.visualization_agent.llm_caller(modification_prompt, temperature=0.0, max_output_tokens=20000)
             logger.info(f"Raw LLM output for modification: {response}")
             # Try to extract JSON block
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
