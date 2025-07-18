@@ -153,7 +153,7 @@ class VisualizeApiClient:
             """
         
         try:
-            response = call_gemini(visualization_prompt, temperature=0.2, max_output_tokens=20000)
+            response = call_gemini(visualization_prompt, temperature=0.2, max_output_tokens=65535)
             logger.info(f"Visualization_prompt: {visualization_prompt}")
             logger.info(f"Raw LLM response: {response}")
             
